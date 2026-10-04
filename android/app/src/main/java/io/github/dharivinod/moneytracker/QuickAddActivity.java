@@ -160,7 +160,7 @@ public class QuickAddActivity extends Activity {
             SpannableString label = new SpannableString(c[1] + "\n" + c[0]);
             label.setSpan(new RelativeSizeSpan(1.7f), 0, c[1].length(), 0); // the emoji, larger than the name
             chip.setText(label);
-            chip.setSelected(c[0].equals(category));
+            chip.setActivated(c[0].equals(category));
             return chip;
         }
 

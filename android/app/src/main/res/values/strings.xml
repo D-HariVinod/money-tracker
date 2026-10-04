@@ -9,4 +9,16 @@
     <string name="shake_on_text">Shake the phone to add an expense</string>
     <string name="quick_title">Add an expense</string>
     <string name="quick_text">Tap to open quick add</string>
+    <string name="quick_heading">Quick add</string>
+    <string name="expense">Expense</string>
+    <string name="income">Income</string>
+    <string name="rupee">₹</string>
+    <string name="zero">0</string>
+    <string name="category">Category</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="quick_need_amount">Enter an amount</string>
+    <string name="quick_need_category">Pick a category</string>
+    <string name="quick_failed">Could not save, please try again</string>
+    <string name="quick_saved">%1$s · %2$s saved</string>
 </resources>

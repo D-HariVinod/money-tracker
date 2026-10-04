@@ -2,4 +2,13 @@
 <resources>
     <color name="paper">#0D1220</color>
     <color name="surface">#151B2D</color>
+    <color name="sunk">#1F2639</color>
+    <color name="ink">#EEF1F8</color>
+    <color name="ink2">#A9B0C4</color>
+    <color name="ink3">#6F7791</color>
+    <color name="blue">#7088FF</color>
+    <color name="green">#3DD39A</color>
+    <color name="red">#FF6A5C</color>
+    <color name="chip_on">#337088FF</color>
+    <color name="on_blue">#0D1220</color>
 </resources>

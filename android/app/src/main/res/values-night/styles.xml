@@ -8,4 +8,10 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
+
+    <style name="PopupTheme" parent="android:Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowBackground">@drawable/popup_bg</item>
+        <item name="android:colorAccent">@color/blue</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+    </style>
 </resources>

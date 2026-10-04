@@ -584,6 +584,7 @@ let ver = 0;
 function persist() {
   if (!MODE) return;
   store.set(cacheKey(), { tx: S.tx, rec: S.rec, bud: S.bud, url: S.url, sheetUrl: S.sheetUrl, sheetEmail: S.sheetEmail });
+  syncCats();
 }
 function put(arr, o) { const i = arr.findIndex(x => x.id === o.id); if (i > -1) arr[i] = o; else arr.unshift(o); }
 
@@ -1503,15 +1504,36 @@ function unlock() {
   render();
   load();
   consumeQuick();
+  takeQuick();
 }
 function consumeQuick() {
   if (!pendingQuick || !unlocked) return;
   const p = pendingQuick; pendingQuick = null;
   setTimeout(() => openAdd(p), 300);
 }
-/* Called by the Android app: a shake while it is already running, and coming back from a system screen */
-window.quickAdd = () => { if ($('#sh-add').classList.contains('on')) return; pendingQuick = { quick: true, type: 'Expense' }; consumeQuick(); };
-window.onNativeResume = () => { if ($('#sh-set').classList.contains('on')) renderSettings(); };
+/* Android app: the shake pop-up is a small native window. What is typed there waits in the app
+   until this page is open and unlocked, and is added here. */
+function takeQuick() {
+  if (!NATIVE || !unlocked) return;
+  let list = [];
+  try { list = JSON.parse(NATIVE.takeQuick() || '[]'); } catch (e) {}
+  list = list.filter(q => q && q.amount > 0 && q.category && CATS[q.type]);
+  if (!list.length) return;
+  list.forEach(q => {
+    const t = { id: uid('t'), date: q.date || today(), type: q.type, amount: Math.round(q.amount * 100) / 100, category: String(q.category), note: '', mode: lastMode(), source: 'Quick add', created: q.created || nowIso() };
+    put(S.tx, t); enqueue('saveTx', t);
+  });
+  render();
+  toast(list.length === 1 ? 'Quick entry added' : list.length + ' quick entries added');
+}
+/* ...and it shows the same categories, most used first */
+function syncCats() {
+  if (!NATIVE) return;
+  const list = type => usage(type).map(c => [c[0], c[1]]);
+  try { NATIVE.setCategories(JSON.stringify({ Expense: list('Expense'), Income: list('Income') })); } catch (e) {}
+}
+/* Called by the Android app whenever it comes back to the front */
+window.onNativeResume = () => { takeQuick(); if ($('#sh-set').classList.contains('on')) renderSettings(); };
 function authLost() {
   AUTH.token = ''; AUTH.v = ''; saveAuth();
   if (L.step === 'login') return;
@@ -1727,8 +1749,8 @@ function renderSettings() {
 function shakeRows() {
   const on = NATIVE.shakeEnabled();
   return `<div class="sgroup">
-    <label class="srow switch"><span class="ic sm" style="--c:var(--green)">📳</span><span class="rt"><b>Shake to add</b><small>Shake the phone for a second or two — quick add opens (amount + category)</small></span><input type="checkbox" id="s-shake"${on ? ' checked' : ''}><i></i></label>
-    ${on && !NATIVE.overlayAllowed() ? `<div class="spad"><small>One more step: allow “Display over other apps” so a shake can open the app by itself. Until then a shake shows a notification to tap.</small><button class="btn wide" data-s="overlay">Allow</button></div>` : ''}
+    <label class="srow switch"><span class="ic sm" style="--c:var(--green)">📳</span><span class="rt"><b>Shake to add</b><small>Shake the phone for a second or two — a small pop-up asks for the amount and category</small></span><input type="checkbox" id="s-shake"${on ? ' checked' : ''}><i></i></label>
+    ${on && !NATIVE.overlayAllowed() ? `<div class="spad"><small>One more step: allow “Display over other apps” so a shake can show the pop-up by itself. Until then a shake shows a notification to tap.</small><button class="btn wide" data-s="overlay">Allow</button></div>` : ''}
   </div>`;
 }
 function onSettings(e) {
@@ -1928,6 +1950,7 @@ function startMode(status) {
   if (c && Array.isArray(c.tx)) Object.assign(S, { tx: c.tx, rec: c.rec || [], bud: c.bud || {}, url: c.url || '', sheetUrl: c.sheetUrl || '', sheetEmail: c.sheetEmail || '', ready: true });
   else if (MODE === 'demo') { Object.assign(S, demoData()); S.ready = true; persist(); }
   else if (MODE === 'local') S.ready = true;
+  syncCats();
   if (MODE === 'local' && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); // ask the browser not to evict the data
   setSync(MODE === 'demo' ? 'demo' : Q.length ? (navigator.onLine ? 'saving' : 'offline') : 'loading');
   go('home');

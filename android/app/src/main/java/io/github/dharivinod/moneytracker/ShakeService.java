@@ -156,7 +156,7 @@ public class ShakeService extends Service implements SensorEventListener {
 
     private void fire() {
         boolean direct = MainActivity.visible || Settings.canDrawOverlays(this);
-        Log.i(TAG, "shake detected, opening " + (direct ? "the app" : "a notification"));
+        Log.i(TAG, "shake detected, showing " + (direct ? "the pop-up" : "a notification"));
         try {
             Vibrator v = getSystemService(Vibrator.class);
             if (v != null) v.vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE));
@@ -165,13 +165,13 @@ public class ShakeService extends Service implements SensorEventListener {
         }
         if (direct) {
             try {
-                startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.EXTRA_QUICK, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                startActivity(popup());
                 return;
             } catch (RuntimeException e) {
-                Log.w(TAG, "could not open the app", e);
+                Log.w(TAG, "could not show the pop-up", e);
             }
         }
-        // Android does not let a background app open itself without "Display over other apps": offer a tap instead.
+        // Android does not let a background app show a window without "Display over other apps": offer a tap instead.
         Notification n = new Notification.Builder(this, CH_QUICK)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(getString(R.string.quick_title))
@@ -183,9 +183,13 @@ public class ShakeService extends Service implements SensorEventListener {
         getSystemService(NotificationManager.class).notify(ID_QUICK, n);
     }
 
+    /** The quick-add pop-up; the full app instead if the page has not yet said which categories to offer. */
+    private Intent popup() {
+        return new Intent(this, QuickAddActivity.ready(this) ? QuickAddActivity.class : MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    }
+
     private PendingIntent open(boolean quick) {
-        Intent i = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (quick) i.putExtra(MainActivity.EXTRA_QUICK, true);
+        Intent i = quick ? popup() : new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return PendingIntent.getActivity(this, quick ? 1 : 0, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 }

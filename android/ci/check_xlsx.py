@@ -19,5 +19,5 @@ check('three sheets', re.findall(r'<sheet name="([^"]+)"', book) == ['Transactio
 sheet = z.read('xl/worksheets/sheet1.xml').decode('utf-8')
 rows = len(re.findall(r'<row ', sheet))
 check('one row per transaction plus the heading', rows == len(exp['tx']) + 1, f"{rows} rows for {len(exp['tx'])} transactions")
-check('entries are in the file', all(t['category'].replace('&', '&amp;') in sheet for t in exp['tx']) and 'Milk &amp; bread' in sheet)
+check('entries are in the file', all(t['category'].replace('&', '&amp;') in sheet for t in exp['tx']) and 'Milk &amp; bread' in sheet and 'Quick add' in sheet)
 sys.exit(0 if ok else 1)

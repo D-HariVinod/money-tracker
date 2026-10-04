@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The page's own background and tab bar colours, so the system bars blend in. -->
+    <!-- The page's own colours, so the system bars and the shake pop-up match it. -->
     <color name="paper">#F3F5F9</color>
     <color name="surface">#FFFFFF</color>
+    <color name="sunk">#E8ECF3</color>
+    <color name="ink">#161B2E</color>
+    <color name="ink2">#525A73</color>
+    <color name="ink3">#8A91A6</color>
+    <color name="blue">#2F45D8</color>
+    <color name="green">#128A5D</color>
+    <color name="red">#D63A2F</color>
+    <color name="chip_on">#1F2F45D8</color>
+    <color name="on_blue">#FFFFFF</color>
     <color name="icon_bg">#2F45D8</color>
 </resources>

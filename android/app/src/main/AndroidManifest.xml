@@ -31,6 +31,16 @@
             </intent-filter>
         </activity>
 
+        <!-- The small pop-up a shake opens. Its own task, so it floats over the current app instead of bringing Money Tracker forward. -->
+        <activity
+            android:name=".QuickAddActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/PopupTheme"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
         <service
             android:name=".ShakeService"
             android:exported="false"

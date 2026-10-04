@@ -52,13 +52,15 @@ const locked = () => js(`document.body.classList.contains('locked')`);
 const title = () => js(`(document.querySelector('#lock h2') || {}).textContent || ''`);
 
 // ---- phone side ----
-const resumed = () => /(topResumedActivity|mResumedActivity|ResumedActivity)[^\n]*moneytracker/.test(sh('dumpsys activity activities'));
+const top = () => (sh('dumpsys activity activities').match(/(topResumedActivity|mResumedActivity|ResumedActivity)[^\n]*/g) || []).join(' ');
+const appUp = () => /moneytracker\/\.MainActivity/.test(top());
+const popupUp = () => /QuickAddActivity/.test(top());
 const serviceUp = () => { const s = sh('dumpsys activity services ' + PKG); return /ShakeService/.test(s) && /isForeground=true/.test(s); };
 async function shake() {
   adb('emu', 'sensor', 'set', 'acceleration', '0:30:0');
   await sleep(2600);
   adb('emu', 'sensor', 'set', 'acceleration', '0:9.81:0');
-  await sleep(1500);
+  await sleep(1800);
 }
 async function tapText(re) {
   sh('uiautomator dump /sdcard/ui.xml');
@@ -68,6 +70,7 @@ async function tapText(re) {
   const b = node && /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
   if (!b) return false;
   sh(`input tap ${(+b[1] + +b[3]) >> 1} ${(+b[2] + +b[4]) >> 1}`);
+  await sleep(700);
   return true;
 }
 
@@ -95,35 +98,53 @@ async function tapText(re) {
   check('status line reads "Saved on this device"', (await js(`document.querySelector('#sync span').textContent`)) === 'Saved on this device');
   check('shake listener is running', serviceUp());
 
-  // ---------- add an entry ----------
+  // ---------- add an entry in the app ----------
   await js(`openAdd({})`); await sleep(500);
   await js(`document.querySelector('#a-amt').value = '250.50'; document.querySelector('#a-cats [data-v="Groceries"]').click(); document.querySelector('#a-note').value = 'Milk & bread'; document.querySelector('#a-save').click()`);
   await sleep(600);
   check('an expense is saved in the app storage', await js(`S.tx.length === 1 && JSON.parse(localStorage.getItem('mt-local')).tx.length === 1`));
   shot('2-home');
 
-  // ---------- shake while the app is open ----------
+  // ---------- shake while the app is open: the small pop-up ----------
   console.log('info  accelerometer before: ' + (() => { try { return adb('emu', 'sensor', 'get', 'acceleration').trim().split('\n')[0]; } catch (e) { return 'n/a'; } })());
   await shake();
-  check('shake with the app open -> quick add (amount + category only)', await until(`document.querySelector('#sh-add').classList.contains('on') && document.querySelector('#a-more').classList.contains('closed')`, 5000));
-  shot('3-quick-add');
-  await js(`document.querySelector('#a-amt').value = '99'; document.querySelector('#a-cats [data-v="Food & Dining"]').click(); document.querySelector('#a-save').click()`);
-  await sleep(600);
-  check('quick add saves the entry', await js(`S.tx.length === 2 && S.tx.some(t => t.amount === 99 && t.source === 'Quick add')`));
+  check('shake with the app open shows the pop-up', popupUp(), top());
+  shot('3-popup-over-app');
+  await tapText(/^Save$/);
+  check('Save with nothing entered keeps the pop-up open', popupUp());
+  sh('input text 99'); await sleep(500);
+  const picked = await tapText(/Transport/);
+  shot('4-popup-filled');
+  await tapText(/^Save$/); await sleep(1200);
+  check('amount + category + Save closes the pop-up and returns to the app', picked && !popupUp() && appUp(), top());
+  check('the entry shows up in the app', await until(`S.tx.length === 2 && S.tx.some(t => t.amount === 99 && t.category === 'Transport' && t.type === 'Expense' && t.source === 'Quick add')`, 6000), await js(`JSON.stringify(S.tx.map(t => [t.amount, t.category, t.source]))`));
+
+  await sleep(3000); await shake();
+  check('a second shake shows the pop-up again', popupUp(), top());
+  sh('input text 55'); await sleep(400);
+  await tapText(/^Cancel$/); await sleep(1000);
+  check('Cancel closes it without adding anything', !popupUp() && await js(`S.tx.length === 2`));
 
   // ---------- shake from the home screen, before the pop-up permission ----------
   sh('input keyevent KEYCODE_HOME'); await sleep(4500);
-  check('app is in the background', !resumed());
+  check('app is in the background', !appUp() && !popupUp());
   await shake();
-  check('without the pop-up permission a shake posts a "tap to add" notification', /Tap to open quick add/.test(sh('dumpsys notification --noredact')) && !resumed());
+  check('without the pop-up permission a shake posts a "tap to add" notification', /Tap to open quick add/.test(sh('dumpsys notification --noredact')) && !popupUp() && !appUp());
 
   // ---------- shake from the home screen, with the permission ----------
   sh(`appops set ${PKG} SYSTEM_ALERT_WINDOW allow`); await sleep(4500);
   await shake();
-  check('with the permission a shake opens the app by itself', resumed());
-  check('...and quick add is showing', await until(`document.querySelector('#sh-add').classList.contains('on')`, 5000));
-  shot('4-quick-add-from-background');
-  await js(`closeSheet()`);
+  check('with the permission a shake shows the pop-up over the home screen', popupUp() && !appUp(), top());
+  await sleep(800); shot('5-popup-over-home-screen');
+  sh('input text 45000'); await sleep(500);
+  await tapText(/^Income$/);
+  const salary = await tapText(/Salary/);
+  shot('6-popup-income');
+  await tapText(/^Save$/); await sleep(1500);
+  check('saving there closes the pop-up and does not open the app', salary && !popupUp() && !appUp(), top());
+  sh('am start -n ' + ACT); await sleep(2000);
+  if (await locked()) await pin('1234');
+  check('the entry is waiting in the app the next time it is opened', await until(`S.tx.length === 3 && S.tx.some(t => t.amount === 45000 && t.category === 'Salary' && t.type === 'Income')`, 6000), await js(`JSON.stringify(S.tx.map(t => [t.amount, t.category, t.type]))`));
 
   // ---------- data survives the app being killed ----------
   sh('am force-stop ' + PKG); await sleep(1000);
@@ -133,28 +154,33 @@ async function tapText(re) {
   await pin('9999');
   check('wrong PIN is refused', (await locked()) && /4 tries left/.test(await js(`document.querySelector('#lk-err').textContent`)));
   await pin('1234');
-  check('correct PIN unlocks and both entries are still there', !(await locked()) && await js(`S.tx.length === 2`));
+  check('correct PIN unlocks and all three entries are still there', !(await locked()) && await js(`S.tx.length === 3`));
   check('shake listener restarted with the app', serviceUp());
 
   // ---------- auto-lock ----------
   sh('input keyevent KEYCODE_HOME'); await sleep(65000);
   sh('am start -n ' + ACT); await sleep(2000);
   check('after a minute in the background the app locks itself', await locked());
+  await shake();
+  check('the pop-up still works while the app is locked', popupUp(), top());
+  sh('input text 12'); await sleep(400);
+  await tapText(/Groceries/); await tapText(/^Save$/); await sleep(1200);
+  check('...but what it saved stays out of sight until the PIN is entered', (await locked()) && await js(`S.tx.length === 3`));
   await pin('1234');
-  check('unlocks again', !(await locked()));
+  check('after unlocking, that entry appears', !(await locked()) && await until(`S.tx.length === 4 && S.tx.some(t => t.amount === 12)`, 6000));
 
   // ---------- settings: shake switch and Excel file ----------
   await js(`openSettings()`); await sleep(700);
   const set = await js(`document.querySelector('#set-body').innerText`);
   check('settings shows the shake switch and the Excel button, no MacroDroid steps', /Shake to add/.test(set) && /Download Excel file/.test(set) && !/MacroDroid/.test(set) && !/Display over other apps/.test(set));
-  shot('5-settings');
+  shot('7-settings');
   await js(`document.querySelector('#s-shake').click()`); await sleep(1500);
   check('switching shake off stops the listener', (await js(`NATIVE.shakeEnabled()`)) === false && !serviceUp());
   await js(`document.querySelector('#s-shake').click()`); await sleep(1500);
   check('switching it on starts it again', (await js(`NATIVE.shakeEnabled()`)) === true && serviceUp());
 
   await js(`document.querySelector('[data-s="xlsx"]').click()`); await sleep(4000);
-  shot('6-save-screen');
+  shot('8-save-screen');
   const tapped = await tapText(/^save$/i);
   await sleep(4000);
   const file = sh('ls /sdcard/Download/').split(/\s+/).find(f => /^Money-Tracker-.*\.xlsx$/.test(f));
@@ -167,25 +193,28 @@ async function tapText(re) {
   // ---------- back button ----------
   await js(`openAdd({})`); await sleep(600);
   sh('input keyevent KEYCODE_BACK'); await sleep(900);
-  check('Back closes an open sheet and stays in the app', (await js(`!document.querySelector('.sheet.on')`)) && resumed());
+  check('Back closes an open sheet and stays in the app', (await js(`!document.querySelector('.sheet.on')`)) && appUp());
   sh('input keyevent KEYCODE_BACK'); await sleep(1500);
-  check('Back on the home view sends the app to the background', !resumed());
+  check('Back on the home view sends the app to the background', !appUp());
 
   // ---------- nothing crashed ----------
   const crash = adb('logcat', '-d', '-b', 'crash');
   check('no crashes in the debug build', !/moneytracker/.test(crash), crash.split('\n').slice(0, 12).join(' | '));
 
-  // ---------- the signed release build starts too ----------
+  // ---------- the signed release build works too ----------
   adb('uninstall', PKG);
   adb('install', APK('release'));
   sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
+  sh(`appops set ${PKG} SYSTEM_ALERT_WINDOW allow`);
   adb('logcat', '-c');
   sh('am start -n ' + ACT); await sleep(8000);
-  shot('7-release-build');
-  check('release build installs, starts and stays running', !!sh('pidof ' + PKG).trim() && resumed());
+  shot('9-release-build');
+  check('release build installs, starts and stays running', !!sh('pidof ' + PKG).trim() && appUp());
   check('release build starts its shake listener', serviceUp());
+  sh('input keyevent KEYCODE_HOME'); await sleep(1500);
   await shake();
-  check('release build reacts to a shake', /shake detected/.test(adb('logcat', '-d', '-s', 'MoneyShake:I')));
+  check('release build shows the pop-up on a shake', /shake detected/.test(adb('logcat', '-d', '-s', 'MoneyShake:I')) && popupUp(), top());
+  shot('10-release-popup');
   const crash2 = adb('logcat', '-d', '-b', 'crash');
   check('no crashes in the release build', !/moneytracker/.test(crash2), crash2.split('\n').slice(0, 12).join(' | '));
 

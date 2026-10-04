@@ -36,8 +36,7 @@ import java.util.HashMap;
  * The page reaches these through window.MoneyNative.
  */
 public class MainActivity extends Activity {
-    static final String EXTRA_QUICK = "quick";
-    /** True while the app is on screen; the shake service may then open quick add directly. */
+    /** True while the app is on screen; the shake service may then show its pop-up directly. */
     static volatile boolean visible;
 
     // Bundled files are served from this reserved https address so the page gets a normal, secure origin.
@@ -67,16 +66,7 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new Client());
         setContentView(web);
 
-        Intent i = getIntent();
-        web.loadUrl("https://" + HOST + "/index.html" + (isQuick(i) ? "?quick=1" : ""));
-        if (i != null) i.removeExtra(EXTRA_QUICK);
-    }
-
-    @Override
-    protected void onNewIntent(Intent i) {
-        super.onNewIntent(i);
-        // A shake while the app is already running. Wait a moment so the page has noticed it is visible again.
-        if (isQuick(i)) web.postDelayed(() -> js("window.quickAdd && quickAdd()"), 300);
+        web.loadUrl("https://" + HOST + "/index.html");
     }
 
     @Override
@@ -136,10 +126,6 @@ public class MainActivity extends Activity {
             }
         }
         js("window.onNativeSaved && onNativeSaved(" + ok + ")");
-    }
-
-    private static boolean isQuick(Intent i) {
-        return i != null && i.getBooleanExtra(EXTRA_QUICK, false);
     }
 
     private void js(String code) {
@@ -285,7 +271,19 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** "Display over other apps": Android only lets a background app open itself when this is allowed. */
+        /** Entries typed into the shake pop-up since the page last asked, as a JSON array. */
+        @JavascriptInterface
+        public String takeQuick() {
+            return Quick.take(MainActivity.this);
+        }
+
+        /** The categories the pop-up should offer, in the page's order. */
+        @JavascriptInterface
+        public void setCategories(String json) {
+            Quick.setCategories(MainActivity.this, json);
+        }
+
+        /** "Display over other apps": Android only lets a background app show a window when this is allowed. */
         @JavascriptInterface
         public boolean overlayAllowed() {
             return Settings.canDrawOverlays(MainActivity.this);

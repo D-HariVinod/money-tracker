@@ -76,6 +76,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: default
+          profile: pixel_6
           disable-animations: true
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           script: node android/ci/test.js

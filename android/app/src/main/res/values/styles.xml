@@ -7,4 +7,25 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
     </style>
+
+    <!-- The shake pop-up: a small rounded window floating over whatever is on screen. -->
+    <style name="PopupTheme" parent="android:Theme.Material.Light.Dialog.NoActionBar">
+        <item name="android:windowBackground">@drawable/popup_bg</item>
+        <item name="android:colorAccent">@color/blue</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+    </style>
+
+    <style name="Seg">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">32dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/ink2</item>
+        <item name="android:background">@drawable/seg_bg</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
 </resources>

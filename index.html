@@ -456,7 +456,8 @@ body.locked>:not(#lock):not(#toast){visibility:hidden}
 
 <script>
 'use strict';
-/* Optional: paste your Apps Script Web App URL (ends with /exec) here to skip the Connect screen. */
+/* Leave empty to keep all data on this device (download it as an Excel file from Settings).
+   Optional: paste an Apps Script Web App URL (ends with /exec) here to sync with a Google Sheet instead. */
 const API_URL = '';
 
 /* =====================================================================
@@ -569,7 +570,9 @@ const BANDC = { ok: 'okc', mid: 'warnc', bad: 'neg' };
 /* ============================== state ============================== */
 const GAS = !!(window.google && google.script && google.script.run); // opened from the Apps Script link
 let apiUrl = GAS ? '' : (API_URL || store.get('mt-api', '') || '');
-let MODE = ''; // 'gas' · 'api' (hosted app) · 'demo' (sample data)
+let MODE = ''; // 'gas' · 'api' (hosted app) · 'local' (data stays on this device) · 'demo' (sample data)
+const onDevice = () => MODE === 'local' || MODE === 'demo'; // no server — everything lives in this browser
+const cacheKey = () => (MODE === 'demo' ? 'mt-demo' : MODE === 'local' ? 'mt-local' : 'mt-cache');
 let AUTH = store.get('mt-auth', {}) || {};
 const saveAuth = () => store.set('mt-auth', AUTH);
 let unlocked = false, lastLoad = 0;
@@ -579,14 +582,14 @@ let ver = 0;
 
 function persist() {
   if (!MODE) return;
-  store.set(MODE === 'demo' ? 'mt-demo' : 'mt-cache', { tx: S.tx, rec: S.rec, bud: S.bud, url: S.url, sheetUrl: S.sheetUrl, sheetEmail: S.sheetEmail });
+  store.set(cacheKey(), { tx: S.tx, rec: S.rec, bud: S.bud, url: S.url, sheetUrl: S.sheetUrl, sheetEmail: S.sheetEmail });
 }
 function put(arr, o) { const i = arr.findIndex(x => x.id === o.id); if (i > -1) arr[i] = o; else arr.unshift(o); }
 
 /* ======================= Google Sheets sync ======================= */
-const SYNC = { ok: 'Synced to Google Sheets', saving: 'Saving…', loading: 'Loading…', offline: 'Offline — will sync later', demo: 'Preview with sample data' };
+const SYNC = { ok: 'Synced to Google Sheets', saving: 'Saving…', loading: 'Loading…', offline: 'Offline — will sync later', demo: 'Preview with sample data', local: 'Saved on this device' };
 function setSync(s) {
-  if (MODE === 'demo') s = 'demo';
+  if (onDevice()) s = MODE;
   const el = $('#sync'); el.dataset.s = s;
   el.lastElementChild.textContent = SYNC[s] + (s === 'offline' && Q.length ? ' · ' + Q.length + ' pending' : '');
 }
@@ -610,12 +613,12 @@ const call = (fn, ...args) => rpc(fn, args);
 const isNet = e => !navigator.onLine || /network|connection|http 0|timeout|failed to fetch|load failed|aborted/i.test(String((e && (e.message || e)) || ''));
 function enqueue(fn, ...args) {
   ver++; persist();
-  if (MODE === 'demo') return;
+  if (onDevice()) return;
   Q.push({ fn, args, tries: 0 }); store.set('mt-q', Q); flush();
 }
 let flushing = false, retryT = 0;
 async function flush() {
-  if (!MODE || MODE === 'demo' || flushing || !AUTH.token || !unlocked) return;
+  if (!MODE || onDevice() || flushing || !AUTH.token || !unlocked) return;
   if (!Q.length) { setSync('ok'); return; }
   if (!navigator.onLine) { setSync('offline'); return; }
   flushing = true; setSync('saving');
@@ -640,7 +643,7 @@ async function flush() {
   flushing = false; setSync('ok');
 }
 async function load() {
-  if (!MODE || MODE === 'demo' || !AUTH.token || !unlocked) return;
+  if (!MODE || onDevice() || !AUTH.token || !unlocked) return;
   lastLoad = Date.now();
   await flush();
   if (Q.length || flushing) return;
@@ -1316,7 +1319,7 @@ function wire() {
 
   dragSheets();
   window.addEventListener('online', flush);
-  window.addEventListener('offline', () => { if (MODE && MODE !== 'demo') setSync('offline'); });
+  window.addEventListener('offline', () => { if (MODE && !onDevice()) setSync('offline'); });
   document.addEventListener('visibilitychange', onVis);
   wireSecurity();
 }
@@ -1458,6 +1461,7 @@ function autoBio() {
 }
 
 const PIN_STEPS = ['create', 'confirm', 'login', 'unlock', 'c-old', 'c-new', 'c-conf'];
+const PIN_LOCK_MIN = 15;
 const L = { step: '', pin: '', first: '', old: '', err: '', busy: false, fails: 0, bioTried: false };
 let pendingQuick = null, hiddenAt = 0;
 
@@ -1523,6 +1527,13 @@ function renderLock() {
       <button class="primary" data-k="bio-on">Use ${BIO}</button><button class="ghost" data-k="bio-skip">Not now</button></div>`;
     return;
   }
+  if (s === 'forgot' && MODE === 'local') {
+    el.innerHTML = `<div class="lk">${logo}<h2>Forgot your PIN?</h2>
+      <p class="sub">Your entries are saved only on this device, so the PIN can’t be reset. ${AUTH.cred && BIO_OK ? `Go back and unlock with ${bioL}, or erase` : 'The only way back in is to erase'} everything and start again.</p>
+      <button class="primary" data-k="back-unlock">Back</button>
+      <button class="del dl" data-k="erase" data-armt="Tap again to erase everything">Erase everything and start again</button></div>`;
+    return;
+  }
   if (s === 'forgot') {
     el.innerHTML = `<div class="lk">${logo}<h2>Forgot your PIN?</h2>
       <ol><li>Open your Google Sheet → Extensions → Apps Script.</li><li>Pick <b>resetPin</b> in the toolbar and press Run.</li><li>Reopen this app and create a new PIN.</li></ol>
@@ -1581,27 +1592,31 @@ async function submitPin() {
   if (s === 'c-new') { L.first = pin; step('c-conf'); return; }
   if (s === 'confirm' || s === 'c-conf') {
     if (pin !== L.first) { L.first = ''; step(s === 'confirm' ? 'create' : 'c-new'); fail('PINs didn’t match — try again'); return; }
-    if (s === 'confirm') return busy(async () => { const r = MODE === 'demo' ? { token: 'demo' } : await rpc('setPin', [], { pin }); await signedIn(r.token, pin); });
+    if (s === 'confirm') return busy(async () => { const r = onDevice() ? { token: MODE } : await rpc('setPin', [], { pin }); await signedIn(r.token, pin); });
     return busy(async () => {
-      const r = MODE === 'demo' ? { token: 'demo' } : await call('changePin', L.old, pin);
+      const r = onDevice() ? { token: MODE } : await call('changePin', L.old, pin);
       AUTH.token = r.token; await setVerifier(pin); saveAuth(); hideLock(); toast('PIN changed');
     });
   }
   if (s === 'login') return busy(async () => { const r = await rpc('login', [], { pin }); await signedIn(r.token, pin); });
   if (s === 'unlock' || s === 'c-old') {
+    if (MODE === 'local' && AUTH.until > Date.now()) { fail(`Too many wrong tries. Try again in ${Math.ceil((AUTH.until - Date.now()) / 60000)} min`); return; }
     L.busy = true; paintDots();
     const ok = await checkLocal(pin);
     L.busy = false;
     if (ok) {
       L.fails = 0;
+      if (AUTH.f) { AUTH.f = 0; saveAuth(); }
       if (s === 'c-old') { L.old = pin; step('c-new'); return; }
       const d = $('#lk-dots'); if (d) d.classList.add('ok');
       haptic(12); setTimeout(unlock, 160); return;
     }
     L.fails++;
+    if (MODE === 'local') { L.fails = AUTH.f = (AUTH.f || 0) + 1; saveAuth(); } // no server to count tries, so count them here
     if (L.fails >= 5) {
       L.fails = 0;
       if (MODE === 'demo') { AUTH = { m: 'demo' }; saveAuth(); step('create', 'Too many tries — create a new PIN'); return; }
+      if (MODE === 'local') { AUTH.f = 0; AUTH.until = Date.now() + PIN_LOCK_MIN * 60000; saveAuth(); fail(`Wrong PIN. Locked for ${PIN_LOCK_MIN} minutes`); return; }
       AUTH.token = ''; AUTH.v = ''; saveAuth(); step('login', 'Too many tries — sign in with your PIN'); return;
     }
     fail(`Wrong PIN · ${5 - L.fails} ${5 - L.fails === 1 ? 'try' : 'tries'} left`);
@@ -1622,6 +1637,7 @@ function lockKey(k) {
       if (MODE === 'demo') { AUTH = { m: 'demo' }; saveAuth(); step('create'); } else step('forgot');
       return;
     case 'back-unlock': step(AUTH.token && AUTH.v ? 'unlock' : 'login'); return;
+    case 'erase': armed($('#lock [data-k=erase]'), () => { ['mt-local', 'mt-auth', 'mt-exported'].forEach(k => store.set(k, null)); AUTH = {}; startMode(); }); return;
     case 'del': if (!L.busy) { L.pin = L.pin.slice(0, -1); L.err = ''; paintDots(); } return;
   }
   if (/^\d$/.test(k) && PIN_STEPS.indexOf(L.step) > -1) {
@@ -1658,7 +1674,7 @@ function openSettings() { renderSettings(); openSheet('sh-set'); }
 function renderSettings() {
   const bioNote = BIO_OK ? 'Instead of typing your PIN'
     : MODE === 'gas' ? 'Not available on the Apps Script link — use the hosted app (see SETUP)' : 'Not available in this browser';
-  const live = MODE !== 'demo';
+  const live = MODE !== 'demo', exported = store.get('mt-exported', '');
   $('#set-body').innerHTML = `
   <div class="lbl">Security</div>
   <div class="sgroup">
@@ -1666,7 +1682,12 @@ function renderSettings() {
     <button class="srow" data-s="pin"><span class="ic sm" style="--c:var(--amber)">🔑</span><span class="rt"><b>Change PIN</b><small>4 digits</small></span></button>
     <button class="srow" data-s="lock"><span class="ic sm" style="--c:var(--violet)">🔒</span><span class="rt"><b>Lock now</b><small>Also locks after 1 minute in the background</small></span></button>
   </div>
-  <div class="lbl">Google Sheet</div>
+  ${MODE === 'local' ? `<div class="lbl">Your data</div>
+  <div class="sgroup spad">
+    <small>Entries are saved only on this device. Download them as an Excel file to keep a backup, or to upload to Google Sheets.</small>
+    <button class="btn wide" data-s="xlsx">Download Excel file</button>
+    <p class="fine">${S.tx.length} entr${S.tx.length === 1 ? 'y' : 'ies'} · ${exported ? 'last downloaded ' + fmtDate(exported) : 'not downloaded yet'}</p>
+  </div>` : `<div class="lbl">Google Sheet</div>
   <div class="sgroup">
     ${live && S.sheetUrl ? `<a class="srow" href="${esc(S.sheetUrl)}" target="_blank" rel="noopener"><span class="ic sm" style="--c:var(--green)">📄</span><span class="rt"><b>Open Google Sheet</b><small>Every entry is saved here</small></span></a>` : ''}
     <div class="spad">
@@ -1675,7 +1696,7 @@ function renderSettings() {
       <button class="btn wide" data-s="share">Save sheet to this email</button>
       <p class="fine" id="s-email-st">${S.sheetEmail ? 'Saved to ' + esc(S.sheetEmail) : ''}</p>
     </div>
-  </div>
+  </div>`}
   <div class="lbl">Shake to add</div>
   <div class="sgroup spad">
     <small>This link opens straight into quick add (amount + category). Point a shake gesture at it.</small>
@@ -1692,6 +1713,7 @@ function onSettings(e) {
   if (a === 'pin') { closeSheet(); lockApp('c-old'); }
   else if (a === 'lock') { closeSheet(); lockApp(AUTH.token && AUTH.v ? 'unlock' : 'login'); }
   else if (a === 'share') share();
+  else if (a === 'xlsx') exportXlsx();
   else if (a === 'copy') copyLink();
   else if (a === 'out') armed(b, () => { closeSheet(); disconnect(); });
   else if (a === 'connect') { store.set('mt-mode', null); AUTH = {}; saveAuth(); MODE = ''; closeSheet(); lockApp('connect'); }
@@ -1721,6 +1743,111 @@ function copyLink() {
   const i = $('#s-url');
   const fb = () => { i.focus(); i.select(); try { document.execCommand('copy'); toast('Link copied'); } catch (e) { toast('Select the link and copy it'); } };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(i.value).then(() => toast('Link copied'), fb); else fb();
+}
+
+/* ============================ Excel export ============================ */
+/* One .xlsx with three sheets, built here in the browser. [key, heading, column width] */
+const XCOLS = {
+  Transactions: [['date', 'Date', 12], ['type', 'Type', 10], ['amount', 'Amount', 13], ['category', 'Category', 22], ['note', 'Note', 30], ['mode', 'Paid via', 10], ['source', 'Source', 12], ['created', 'Created', 18], ['id', 'ID', 16]],
+  Recurring: [['name', 'Name', 26], ['amount', 'Amount', 13], ['category', 'Category', 22], ['every', 'Every (months)', 15], ['dueDay', 'Due day', 9], ['nextDue', 'Next due', 12], ['snoozed', 'Rescheduled to', 15], ['lastPaid', 'Last paid', 12], ['mode', 'Paid via', 10], ['active', 'Active', 8], ['id', 'ID', 16]],
+  Budgets: [['category', 'Category', 22], ['limit', 'Monthly limit', 14]]
+};
+const XDATE = new Set(['date', 'nextDue', 'snoozed', 'lastPaid', 'created']), XNUM = new Set(['amount', 'limit', 'every', 'dueDay']);
+const XTYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const xesc = s => String(s).replace(/[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+/* 'yyyy-mm-dd' or 'yyyy-mm-ddThh:mm:ss' → spreadsheet day number */
+const xserial = s => {
+  const m = /^(\d{4})-(\d\d)-(\d\d)(?:T(\d\d):(\d\d)(?::(\d\d))?)?$/.exec(String(s));
+  return m ? (Date.UTC(+m[1], m[2] - 1, +m[3], +m[4] || 0, +m[5] || 0, +m[6] || 0) - Date.UTC(1899, 11, 30)) / 864e5 : null;
+};
+function xcell(ref, k, v) {
+  if (v == null || v === '') return '';
+  if (k === 'active') v = v ? 'Yes' : 'No';
+  if (XDATE.has(k) && xserial(v) != null) return `<c r="${ref}" s="${k === 'created' ? 4 : 2}"><v>${xserial(v)}</v></c>`;
+  if (XNUM.has(k) && isFinite(+v)) return `<c r="${ref}"${k === 'amount' || k === 'limit' ? ' s="3"' : ''}><v>${+v}</v></c>`;
+  return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`;
+}
+function xsheet(cols, rows, first) {
+  const col = i => String.fromCharCode(65 + i);
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    `<sheetViews><sheetView${first ? ' tabSelected="1"' : ''} workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` +
+    `<cols>${cols.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c[2]}" customWidth="1"/>`).join('')}</cols>` +
+    `<sheetData><row r="1">${cols.map((c, i) => `<c r="${col(i)}1" s="1" t="inlineStr"><is><t>${xesc(c[1])}</t></is></c>`).join('')}</row>` +
+    rows.map((o, r) => `<row r="${r + 2}">${cols.map((c, i) => xcell(col(i) + (r + 2), c[0], o[c[0]])).join('')}</row>`).join('') +
+    '</sheetData></worksheet>';
+}
+/* cell styles: 1 heading · 2 date · 3 amount · 4 date + time */
+const XSTYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/><numFmt numFmtId="165" formatCode="yyyy-mm-dd hh:mm"/></numFmts>' +
+  '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+  '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+  '<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  [164, 4, 165].map(f => `<xf numFmtId="${f}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`).join('') + '</cellXfs>' +
+  '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+/* [[name, text]] → zip bytes (stored, not compressed) */
+function zipStore(files) {
+  const enc = new TextEncoder(), le = (n, len) => Array.from({ length: len }, (_, i) => (n >>> (8 * i)) & 255);
+  const T = Array.from({ length: 256 }, (_, n) => { for (let k = 0; k < 8; k++) n = n & 1 ? 0xEDB88320 ^ (n >>> 1) : n >>> 1; return n >>> 0; });
+  const crc = b => { let c = -1; for (let i = 0; i < b.length; i++) c = T[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+  const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  const body = [], dir = [];
+  let off = 0;
+  files.forEach(([name, text]) => {
+    const n = enc.encode(name), b = enc.encode(text);
+    const meta = [...le(20, 2), ...le(0, 2), ...le(0, 2), ...le(time, 2), ...le(date, 2), ...le(crc(b), 4), ...le(b.length, 4), ...le(b.length, 4), ...le(n.length, 2), ...le(0, 2)];
+    body.push(Uint8Array.from([...le(0x04034b50, 4), ...meta]), n, b);
+    dir.push(Uint8Array.from([...le(0x02014b50, 4), ...le(20, 2), ...meta, ...le(0, 10), ...le(off, 4)]), n);
+    off += 30 + n.length + b.length;
+  });
+  const size = sum(dir, x => x.length);
+  const parts = body.concat(dir, [Uint8Array.from([...le(0x06054b50, 4), ...le(0, 4), ...le(files.length, 2), ...le(files.length, 2), ...le(size, 4), ...le(off, 4), ...le(0, 2)])]);
+  const out = new Uint8Array(off + size + 22);
+  let p = 0;
+  parts.forEach(x => { out.set(x, p); p += x.length; });
+  return out;
+}
+function buildXlsx() {
+  const data = {
+    Transactions: S.tx.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.created).localeCompare(String(b.created))),
+    Recurring: S.rec,
+    Budgets: Object.keys(S.bud).filter(k => S.bud[k] > 0).map(k => ({ category: k, limit: S.bud[k] }))
+  };
+  const names = Object.keys(XCOLS), X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const PKG = 'http://schemas.openxmlformats.org/package/2006/', REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', CT = 'application/vnd.openxmlformats-officedocument.spreadsheetml.';
+  return zipStore([
+    ['[Content_Types].xml', `${X}<Types xmlns="${PKG}content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` +
+      `<Override PartName="/xl/workbook.xml" ContentType="${CT}sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="${CT}styles+xml"/>` +
+      names.map((n, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="${CT}worksheet+xml"/>`).join('') + '</Types>'],
+    ['_rels/.rels', `${X}<Relationships xmlns="${PKG}relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ['xl/workbook.xml', `${X}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${REL}"><sheets>` +
+      names.map((n, i) => `<sheet name="${n}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', `${X}<Relationships xmlns="${PKG}relationships">` +
+      names.map((n, i) => `<Relationship Id="rId${i + 1}" Type="${REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
+      `<Relationship Id="rId${names.length + 1}" Type="${REL}/styles" Target="styles.xml"/></Relationships>`],
+    ['xl/styles.xml', XSTYLES]
+  ].concat(names.map((n, i) => [`xl/worksheets/sheet${i + 1}.xml`, xsheet(XCOLS[n], data[n], !i)])));
+}
+async function exportXlsx() {
+  const name = `Money-Tracker-${today()}.xlsx`;
+  try {
+    const blob = new Blob([buildXlsx()], { type: XTYPE });
+    /* iPhone can't save a download from an installed app, so hand the file to the share sheet (Save to Files / Drive) */
+    const file = IOS && window.File ? new File([blob], name, { type: XTYPE }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file] });
+    else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    toast('Couldn’t create the Excel file', true); return;
+  }
+  store.set('mt-exported', today()); renderSettings();
+  toast('Excel file downloaded');
 }
 
 function wireSecurity() {
@@ -1756,14 +1883,16 @@ function params(cb) {
 function startMode(status) {
   if (AUTH.m !== MODE) { AUTH = { m: MODE }; saveAuth(); }
   Object.assign(S, { tx: [], rec: [], bud: {}, url: '', sheetUrl: '', sheetEmail: '', ready: false, month: thisMonth() });
-  Q = MODE === 'demo' ? [] : (store.get('mt-q', []) || []);
-  const c = store.get(MODE === 'demo' ? 'mt-demo' : 'mt-cache', null);
+  Q = onDevice() ? [] : (store.get('mt-q', []) || []);
+  const c = store.get(cacheKey(), null);
   if (c && Array.isArray(c.tx)) Object.assign(S, { tx: c.tx, rec: c.rec || [], bud: c.bud || {}, url: c.url || '', sheetUrl: c.sheetUrl || '', sheetEmail: c.sheetEmail || '', ready: true });
   else if (MODE === 'demo') { Object.assign(S, demoData()); S.ready = true; persist(); }
+  else if (MODE === 'local') S.ready = true;
+  if (MODE === 'local' && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); // ask the browser not to evict the data
   setSync(MODE === 'demo' ? 'demo' : Q.length ? (navigator.onLine ? 'saving' : 'offline') : 'loading');
   go('home');
   if (AUTH.token && AUTH.v) { lockApp('unlock'); return; }
-  if (MODE === 'demo') { lockApp('create'); return; }
+  if (onDevice()) { lockApp('create'); return; }
   if (status) { lockApp(status.hasPin ? 'login' : 'create'); return; }
   lockApp('wait');
   rpc('status').then(r => step(r.hasPin ? 'login' : 'create'), e => step('offline', isNet(e) ? 'Check your internet connection.' : String(e.message || e)));
@@ -1777,8 +1906,7 @@ function init() {
     if (!GAS) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
     consumeQuick();
   });
-  MODE = GAS ? 'gas' : apiUrl ? 'api' : store.get('mt-mode', '') === 'demo' ? 'demo' : '';
-  if (!MODE) { lockApp('connect'); return; }
+  MODE = GAS ? 'gas' : apiUrl ? 'api' : store.get('mt-mode', '') === 'demo' ? 'demo' : 'local';
   startMode();
 }
 init();

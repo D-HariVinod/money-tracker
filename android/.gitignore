@@ -1,0 +1,7 @@
+.gradle/
+build/
+app/build/
+local.properties
+# index.html and the icons are copied in from the repo root at build time
+app/src/main/assets/www/
+ci/out/

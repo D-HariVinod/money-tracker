@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Money Tracker</string>
+    <string name="bio_subtitle">Unlock with your fingerprint</string>
+    <string name="bio_use_pin">Use PIN</string>
+    <string name="shake_channel">Shake to add</string>
+    <string name="quick_channel">Quick add</string>
+    <string name="shake_on_title">Shake to add is on</string>
+    <string name="shake_on_text">Shake the phone to add an expense</string>
+    <string name="quick_title">Add an expense</string>
+    <string name="quick_text">Tap to open quick add</string>
+</resources>

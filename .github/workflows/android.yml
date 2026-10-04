@@ -1,0 +1,102 @@
+name: Android app
+
+# Builds the Android app, tests it on an emulator, and publishes MoneyTracker.apk as a release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - icon-*.png
+      - android/**
+      - .github/workflows/android.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bundle the web app into the Android project
+        run: |
+          mkdir -p android/app/src/main/assets/www
+          cp index.html manifest.webmanifest icon-192.png icon-512.png android/app/src/main/assets/www/
+
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Build
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: money
+        run: gradle -p android --no-daemon assembleDebug assembleRelease
+
+      - name: Keep the built app
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: android/app/build/outputs/apk/**/*.apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Test on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: node android/ci/test.js
+
+      - name: Check the exported Excel file
+        run: python3 android/ci/check_xlsx.py android/ci/out
+
+      - name: Keep the test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: android/ci/out
+
+      - name: Publish the app
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk MoneyTracker.apk
+          gh release create "v1.0.${{ github.run_number }}" MoneyTracker.apk \
+            --target "${{ github.sha }}" --latest \
+            --title "Money Tracker 1.0.${{ github.run_number }}" \
+            --notes "Android app. On your phone, download MoneyTracker.apk and open it to install."

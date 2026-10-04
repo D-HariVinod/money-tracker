@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The page's own background and tab bar colours, so the system bars blend in. -->
+    <color name="paper">#F3F5F9</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="icon_bg">#2F45D8</color>
+</resources>

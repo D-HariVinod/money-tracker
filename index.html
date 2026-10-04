@@ -569,6 +569,7 @@ const BANDC = { ok: 'okc', mid: 'warnc', bad: 'neg' };
 
 /* ============================== state ============================== */
 const GAS = !!(window.google && google.script && google.script.run); // opened from the Apps Script link
+const NATIVE = window.MoneyNative || null; // running inside the Android app: fingerprint, file saving and shake come from it
 let apiUrl = GAS ? '' : (API_URL || store.get('mt-api', '') || '');
 let MODE = ''; // 'gas' · 'api' (hosted app) · 'local' (data stays on this device) · 'demo' (sample data)
 const onDevice = () => MODE === 'local' || MODE === 'demo'; // no server — everything lives in this browser
@@ -1416,7 +1417,16 @@ const SVG_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const SVG_BIO = IOS ? SVG_FACE : SVG_FP;
 let BIO_OK = false;
 
+/* Android app: the phone's own fingerprint prompt; it answers through onNativeBio */
+let bioWait = null;
+window.onNativeBio = (ok, why) => {
+  const w = bioWait; bioWait = null;
+  if (w) ok ? w.res() : w.rej(Object.assign(new Error(why || 'failed'), { name: why === 'cancel' ? 'NotAllowedError' : 'Error' }));
+};
+const nativeBio = () => new Promise((res, rej) => { bioWait = { res, rej }; NATIVE.bioPrompt(); });
+
 async function bioAvailable() {
+  if (NATIVE) { try { return !!NATIVE.bioAvailable(); } catch (e) { return false; } }
   try {
     const pp = document.permissionsPolicy || document.featurePolicy;
     if (pp && pp.allowsFeature && !pp.allowsFeature('publickey-credentials-get')) return false;
@@ -1424,6 +1434,7 @@ async function bioAvailable() {
   } catch (e) { return false; }
 }
 async function bioEnable() {
+  if (NATIVE) { await nativeBio(); AUTH.cred = 'native'; delete AUTH.noBio; saveAuth(); return; }
   const cred = await navigator.credentials.create({
     publicKey: {
       challenge: rand(32), rp: { name: 'Money Tracker' },
@@ -1446,7 +1457,8 @@ function bioErr(e) {
 async function bioUnlock(manual) {
   if (!AUTH.cred || !BIO_OK) return;
   try {
-    await navigator.credentials.get({ publicKey: { challenge: rand(32), allowCredentials: [{ type: 'public-key', id: unb64u(AUTH.cred) }], userVerification: 'required', timeout: 60000 } });
+    if (NATIVE) await nativeBio();
+    else await navigator.credentials.get({ publicKey: { challenge: rand(32), allowCredentials: [{ type: 'public-key', id: unb64u(AUTH.cred) }], userVerification: 'required', timeout: 60000 } });
     if (L.step !== 'unlock') return;
     const d = $('#lk-dots'); if (d) d.classList.add('ok');
     haptic(14); setTimeout(unlock, 180);
@@ -1497,6 +1509,9 @@ function consumeQuick() {
   const p = pendingQuick; pendingQuick = null;
   setTimeout(() => openAdd(p), 300);
 }
+/* Called by the Android app: a shake while it is already running, and coming back from a system screen */
+window.quickAdd = () => { if ($('#sh-add').classList.contains('on')) return; pendingQuick = { quick: true, type: 'Expense' }; consumeQuick(); };
+window.onNativeResume = () => { if ($('#sh-set').classList.contains('on')) renderSettings(); };
 function authLost() {
   AUTH.token = ''; AUTH.v = ''; saveAuth();
   if (L.step === 'login') return;
@@ -1673,6 +1688,7 @@ const quickUrl = () => (MODE === 'gas' ? (S.url || '') : location.origin + locat
 function openSettings() { renderSettings(); openSheet('sh-set'); }
 function renderSettings() {
   const bioNote = BIO_OK ? 'Instead of typing your PIN'
+    : NATIVE ? 'Add a fingerprint in your phone’s settings first'
     : MODE === 'gas' ? 'Not available on the Apps Script link — use the hosted app (see SETUP)' : 'Not available in this browser';
   const live = MODE !== 'demo', exported = store.get('mt-exported', '');
   $('#set-body').innerHTML = `
@@ -1698,14 +1714,22 @@ function renderSettings() {
     </div>
   </div>`}
   <div class="lbl">Shake to add</div>
-  <div class="sgroup spad">
+  ${NATIVE ? shakeRows() : `<div class="sgroup spad">
     <small>This link opens straight into quick add (amount + category). Point a shake gesture at it.</small>
     <div class="copy"><input class="field" id="s-url" readonly value="${esc(quickUrl())}"><button class="btn" data-s="copy">Copy</button></div>
     <details><summary>Android — shake</summary><ol><li>Install <b>MacroDroid</b> from the Play Store.</li><li>Add Macro → Add Trigger → search “shake” → <b>Shake Device</b>.</li><li>Add Action → search “website” → <b>Open Website</b> → paste the link.</li><li>Save. Shake the phone → quick add opens.</li></ol></details>
     <details><summary>iPhone — back tap</summary><ol><li>iOS doesn’t allow shake triggers outside an app, so use Back Tap.</li><li>Shortcuts → + → <b>Open URLs</b> → paste the link → name it “Add expense”.</li><li>Settings → Accessibility → Touch → <b>Back Tap</b> → Double Tap → “Add expense”.</li><li>Double-tap the back of the phone → quick add opens.</li></ol></details>
-  </div>
+  </div>`}
   ${MODE === 'api' ? '<button class="del dl" data-s="out" data-armt="Tap again to disconnect">Disconnect this device</button>'
     : MODE === 'demo' ? '<button class="primary" data-s="connect">Connect your Google Sheet</button>' : ''}`;
+}
+/* Android app: the shake listener is built in, so this is just its switch */
+function shakeRows() {
+  const on = NATIVE.shakeEnabled();
+  return `<div class="sgroup">
+    <label class="srow switch"><span class="ic sm" style="--c:var(--green)">📳</span><span class="rt"><b>Shake to add</b><small>Shake the phone for a second or two — quick add opens (amount + category)</small></span><input type="checkbox" id="s-shake"${on ? ' checked' : ''}><i></i></label>
+    ${on && !NATIVE.overlayAllowed() ? `<div class="spad"><small>One more step: allow “Display over other apps” so a shake can open the app by itself. Until then a shake shows a notification to tap.</small><button class="btn wide" data-s="overlay">Allow</button></div>` : ''}
+  </div>`;
 }
 function onSettings(e) {
   const b = e.target.closest('[data-s]'); if (!b) return;
@@ -1715,6 +1739,7 @@ function onSettings(e) {
   else if (a === 'share') share();
   else if (a === 'xlsx') exportXlsx();
   else if (a === 'copy') copyLink();
+  else if (a === 'overlay') NATIVE.openOverlaySettings();
   else if (a === 'out') armed(b, () => { closeSheet(); disconnect(); });
   else if (a === 'connect') { store.set('mt-mode', null); AUTH = {}; saveAuth(); MODE = ''; closeSheet(); lockApp('connect'); }
 }
@@ -1829,10 +1854,23 @@ function buildXlsx() {
     ['xl/styles.xml', XSTYLES]
   ].concat(names.map((n, i) => [`xl/worksheets/sheet${i + 1}.xml`, xsheet(XCOLS[n], data[n], !i)])));
 }
+function exportDone(ok) {
+  if (!ok) { toast('Couldn’t save the Excel file', true); return; }
+  store.set('mt-exported', today());
+  if ($('#sh-set').classList.contains('on')) renderSettings();
+  toast(NATIVE ? 'Excel file saved' : 'Excel file downloaded');
+}
+window.onNativeSaved = exportDone;
 async function exportXlsx() {
   const name = `Money-Tracker-${today()}.xlsx`;
   try {
-    const blob = new Blob([buildXlsx()], { type: XTYPE });
+    const bytes = buildXlsx();
+    if (NATIVE) { // the Android app shows the phone's "save" screen and answers through onNativeSaved
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      NATIVE.saveFile(name, btoa(s)); return;
+    }
+    const blob = new Blob([bytes], { type: XTYPE });
     /* iPhone can't save a download from an installed app, so hand the file to the share sheet (Save to Files / Drive) */
     const file = IOS && window.File ? new File([blob], name, { type: XTYPE }) : null;
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file] });
@@ -1844,16 +1882,18 @@ async function exportXlsx() {
     }
   } catch (e) {
     if (e && e.name === 'AbortError') return;
-    toast('Couldn’t create the Excel file', true); return;
+    exportDone(false); return;
   }
-  store.set('mt-exported', today()); renderSettings();
-  toast('Excel file downloaded');
+  exportDone(true);
 }
 
 function wireSecurity() {
   $('#gear').addEventListener('click', () => { haptic(6); openSettings(); });
   $('#set-body').addEventListener('click', onSettings);
-  $('#set-body').addEventListener('change', e => { if (e.target.id === 's-bio') toggleBio(e.target.checked, e.target); });
+  $('#set-body').addEventListener('change', e => {
+    if (e.target.id === 's-bio') toggleBio(e.target.checked, e.target);
+    else if (e.target.id === 's-shake') { NATIVE.setShake(e.target.checked); renderSettings(); }
+  });
   $('#lock').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b && !b.disabled) lockKey(b.dataset.k); });
   $('#lock').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'lk-url') { e.preventDefault(); lockKey('connect'); } });
   document.addEventListener('keydown', e => {

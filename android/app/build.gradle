@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The app is the web page from the repo root, shown inside this shell.
+// Copy index.html, manifest.webmanifest and the two icons into src/main/assets/www before building.
+def keystore = System.getenv('KEYSTORE_FILE')
+
+android {
+    namespace 'io.github.dharivinod.moneytracker'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.dharivinod.moneytracker'
+        minSdk 26
+        targetSdk 34
+        versionCode((System.getenv('VERSION_CODE') ?: '1') as Integer)
+        versionName(System.getenv('VERSION_NAME') ?: '1.0')
+    }
+
+    signingConfigs {
+        release {
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Updates only install over the old app when they are signed with the same key.
+            signingConfig keystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
